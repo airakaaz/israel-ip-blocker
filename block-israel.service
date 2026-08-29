@@ -1,0 +1,9 @@
+[Unit]
+Description=Refresh nftables blocklist for Israeli IP allocations
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/env python3 /usr/local/libexec/update-block-israel.py
+User=root
