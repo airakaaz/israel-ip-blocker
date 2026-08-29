@@ -14,10 +14,11 @@ A small `systemd` + `nftables` blocklist updater for IP allocations registered t
 
 ## Files
 
-- `update-block-israel.py` — fetches RIR data and updates nftables
+- `fetch_il_ip_ranges.py` — shared RIR fetcher; outputs JSON or CIDR CSV
+- `update-block-israel.py` — systemd runtime helper that applies fetched CIDRs to nftables
 - `block-israel.service` — one-shot systemd service
 - `block-israel.timer` — daily refresh timer
-- `init-israel-blocker.sh` — installer and activator
+- `init-israel-blocker.sh` — non-Nix installer and activator
 
 ## Install
 
@@ -30,6 +31,7 @@ sudo ./init-israel-blocker.sh --permanent
 `--permanent` copies the files to their system locations:
 
 ```text
+/usr/local/libexec/fetch_il_ip_ranges.py
 /usr/local/libexec/update-block-israel.py
 /etc/systemd/system/block-israel.service
 /etc/systemd/system/block-israel.timer
@@ -38,6 +40,8 @@ sudo ./init-israel-blocker.sh --permanent
 Without `--permanent`, the initializer creates symlinks from those system locations back to this directory. That is convenient for development, but moving or deleting this directory will break the service.
 
 The initializer reloads systemd, enables the timer, and runs an initial update.
+
+The fetcher and nftables updater are deliberately separate. The fetcher is reusable by both approaches. The standalone systemd unit uses `update-block-israel.py` for runtime firewall mutation; the NixOS module does not package that updater and instead declares the firewall structure in Nix, then pipes the fetcher's `--nft` output directly into nftables.
 
 ## Check status and logs
 
@@ -93,3 +97,27 @@ The RIR feeds used are:
 - RIPE NCC
 
 This project is intended for defensive network administration. Review the generated ranges before deploying it on a production system.
+
+## NixOS flake module
+
+The repository exposes a NixOS module as `nixosModules.default`. Add the flake as an input to your system configuration:
+
+```nix
+# flake.nix
+inputs.israel-ip-blocker.url = "github:airakaaz/israel-ip-blocker";
+```
+
+Import and enable the module in the host configuration:
+
+```nix
+{ inputs, ... }:
+{
+  imports = [ inputs.israel-ip-blocker.nixosModules.default ];
+
+  services.israel-ip-blocker.enable = true;
+}
+```
+
+The module declaratively creates the `inet block_israel` nftables table, its IPv4/IPv6 interval sets, the input/output/forward drop chains, and the systemd service/timer. Its runtime refresh uses only the shared fetcher; the non-Nix `update-block-israel.py` is not part of the flake module.
+
+The module creates `israel-ip-blocker.service` and a persistent daily `israel-ip-blocker.timer`. The service runs once at boot after the declarative nftables table is loaded, then refreshes the declared sets daily. Validate with `nixos-rebuild dry-build` before switching; enabling it changes the host firewall.
